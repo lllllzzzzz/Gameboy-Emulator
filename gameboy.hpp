@@ -29,7 +29,7 @@ class GameBoy
         void executeOpcode              (const word address);
         void emulateCycles              (const unsigned int numCycles);
 
-        CPU* gbCPU;
+        // CPU* gbCPU;
 
     protected:
 
