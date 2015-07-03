@@ -65,6 +65,9 @@ class GameBoy
         bool    _interruptsEnabled;     // Interrupt enable flag
         bool    _romBankingEnabled;     // ROM banking enabled flag
         bool    _ramBankingEnabled;     // RAM banking enabled flag
+        word    _timerCounter;
+        byte    _dividerRegister;
+        byte    _dividerCounter;
         //bool    _romBanking;            
         bool    _isHalted;              // CPU halted flag
         bool    _isStopped;             // CPU stopped flag
@@ -79,6 +82,15 @@ class GameBoy
         void changeHiRomBank            (const byte data);
         void changeRamBank              (const byte data);
         void changeRomRamMode           (const byte data);
+        void updateTimers               (const int numCycles);
+        byte getClockFreq               ();
+        void setClockFreq               ();
+        void doDividerRegister          (const int numCycles);
+        bool isClockEnabled             ();
+        void generateInterrupt          (const byte interruptVector);
+        void doInterrupts               ();
+        void serviceInterrupt           (const byte interruptNum);
+        void pushWord                   (const word data);
 
         // LD reg,reg
         void ld_aa();
