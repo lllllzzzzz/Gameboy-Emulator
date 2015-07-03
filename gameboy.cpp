@@ -4,6 +4,10 @@
 //#include <iterator>
 #include "gameboy.hpp"
 
+#define TIMA    0xFF05
+#define TMA     0xFF06
+#define TMC     0xFF07
+
 // Z80 mnemonics, incomplete
 const char *Z80_mnemonics[0x100] =
 {/*   0          1          2          3             4          5           6          7          8          9           A          B           C          D          E          F       */
@@ -173,26 +177,32 @@ void GameBoy::writeMemory(const word address, const byte data)
         /*std::cerr << "Illegal write to ROM at address "
                   << address << std::endl;
         return;*/
-
         switchBanks(address, data);
-    }
-
-    // If writing to echo RAM, also write to RAM
-    if (address >= 0xE000 && address < 0xFE00) {
+    // If writing to echo RAM, also write to RAM (echo RAM)
+    } else if (address >= 0xE000 && address < 0xFE00) {
         _romMemory[address]          = data;
         _romMemory[address - 0x2000] = data;
         return;
-    }
-
     // Do not allow writing to restricted memory (0xFEA0 - 0xFEFF)
-    if (address >= 0xFEA0 && address < 0xFEFF) {
+    } else if (address >= 0xFEA0 && address < 0xFEFF) {
         std::cerr << "Illegal write to restricted memory at address "
                   << address << std::endl;
         return;
-    }
+    // If writing to TMC, set clock frequency
+    } else if (address == TMC) {
+        byte currentClockFreq = getClockFreq();
+        _romMemory[TMC] = data;
+        byte newClockFreq = getClockFreq();
 
-    // Write byte to memory at address
-    _romMemory[address] = data;
+        if (currentClockFreq != newClockFreq) {
+            setClockFreq();
+        }
+    // If writing to divider register, reset
+    } else if (address == 0xFF04) {
+        _romMemory[0xFF04] = 0;
+    } else {
+        _romMemory[address] = data;
+    }
 }
 
 byte GameBoy::readMemory(const word address)
@@ -201,16 +211,12 @@ byte GameBoy::readMemory(const word address)
     if (address >= 0x4000 && address <= 0x7FFF) {
         word newAddress = address - 0x4000;
         return newAddress + (_currentRomBank * 0x4000);
-    }
-
-    // Reading from RAM memory bank (0xA000 - 0xBFFF)?
-    if (address >= 0xA000 && address <= 0xBFFF) {
+    } else if (address >= 0xA000 && address <= 0xBFFF) {
         word newAddress = address - 0xA000;
         return newAddress + (_currentRamBank * 0x2000);
+    } else {
+        return _romMemory[address];
     }
-
-    // Return byte from memory
-    return _romMemory[address];
 }
 
 void GameBoy::switchBanks(const word address, const byte data)
@@ -225,11 +231,7 @@ void GameBoy::switchBanks(const word address, const byte data)
         }
     } else if (address >= 0x4000 && address < 0x6000) {
         if (_MBC == MBC1) {
-            if (_romBankingEnabled) {
-                changeHiRomBank(data);
-            } else {
-                changeRamBank(data);
-            }
+            (_romBankingEnabled) ? changeHiRomBank(data) : changeRamBank(data);
         }
     } else if (address >= 0x6000 && address < 0x8000) {
         if (_MBC == MBC1) {
@@ -241,16 +243,12 @@ void GameBoy::switchBanks(const word address, const byte data)
 void GameBoy::enableRamBank(const word address, const byte data)
 {
     // If MBC2 bit 4 of address must be 0, else return
-    if (_MBC == MBC2) {
-        if (address & 0x8 == 1) {
-            return;
-        }
-    }
-
+    if ((_MBC == MBC2) && ((address & 0x8) == 1)) {
+        return;
     // If lower nybble of data is 0xA, enable RAM
-    if (data & 0xF == 0xA) {
+    } else if ((data & 0xF) == 0xA) {
         _ramBankingEnabled = true;
-    } else if (data & 0xF == 0x0) {
+    } else if ((data & 0xF) == 0x0) {
         _ramBankingEnabled = false;
     }
 }
@@ -277,10 +275,7 @@ void GameBoy::changeHiRomBank(const byte data)
 {
     _currentRomBank = data & 31;
     _currentRomBank |= (data & 224);
-
-    if (_currentRomBank == 0) {
-        _currentRomBank++;
-    }
+    _currentRomBank += (_currentRomBank == 0);
 }
 
 void GameBoy::changeRamBank(const byte data)
@@ -288,23 +283,122 @@ void GameBoy::changeRamBank(const byte data)
     // Cannot change RAM banks in MBC2
     if (_MBC == MBC2) {
         return;
+    } else {
+        _currentRamBank = data & 0x3;
     }
-
-    _currentRamBank = data & 0x3;
 }
 
 void GameBoy::changeRomRamMode(const byte data)
 {
-    _romBankingEnabled = (data & 0x1 == 0) ? true : false;
+    _romBankingEnabled = ((data & 0x1) == 0) ? true : false;
 
     if (_romBankingEnabled) {
         _currentRamBank = 0;
     }
 }
 
+void GameBoy::updateTimers(const int numCycles)
+{
+    doDividerRegister(numCycles);
+
+    if (isClockEnabled()) {
+        _timerCounter -= numCycles;
+    }
+
+    if (_timerCounter <= 0) {
+        setClockFreq();
+
+        if (readMemory(TIMA) == 255) {
+            writeMemory(TIMA, readMemory(TMA));
+            generateInterrupt(2);
+        } else {
+            writeMemory(TIMA, readMemory(TIMA) + 1);
+        }
+    }
+}
+
+byte GameBoy::getClockFreq()
+{
+    // Bits 1 and 0 of TMC store current clock frequency
+    return readMemory(TMC) & 0x3;
+}
+
+void GameBoy::setClockFreq()
+{
+    byte clockFreq = getClockFreq();
+    switch (clockFreq) {
+        case 0x00: _timerCounter = 1024; break; // frequency = 4096
+        case 0x01: _timerCounter = 16;   break; // frequency = 262144
+        case 0x10: _timerCounter = 64;   break; // frequency = 65536
+        case 0x11: _timerCounter = 256;  break; // frequency = 16382
+    }
+}
+
+void GameBoy::doDividerRegister(const int numCycles)
+{
+    _dividerRegister += numCycles;
+    if (_dividerRegister >= 255) {
+        _dividerCounter = 0;
+        _romMemory[0xFF04]++; // We must write to divider register directly
+    }
+}
+
+bool GameBoy::isClockEnabled()
+{
+    // TMC bit 2 is clock enable flag (1 == on, 0 == off)
+    return ((readMemory(TMC) & 0x4) != 0) ? true : false;
+}
+
+void GameBoy::generateInterrupt(const byte interruptVector)
+{
+
+}
+
+void GameBoy::doInterrupts()
+{
+    if (_interruptsEnabled) {
+        byte interruptRequest = readMemory(0xFF0F);
+        byte interruptEnable  = readMemory(0xFFFF);
+
+        if (interruptRequest > 0) {
+            for (int i = 0; i < 5; i++) {
+                if ((interruptRequest & i) && (interruptEnable & i)) {
+                        serviceInterrupt(i);
+                }
+            }
+        }
+    }
+}
+
+void GameBoy::pushWord(const word data)
+{
+
+}
+
+/*V-Blank: 0x40
+LCD: 0x48
+TIMER: 0x50
+JOYPAD: 0x60*/
+void GameBoy::serviceInterrupt(const byte interruptNum)
+{
+    _interruptsEnabled = false;
+    byte interruptRequest = readMemory(0xFF0F);
+    interruptRequest &= ~interruptNum;
+    writeMemory(0xFF0F, interruptRequest);
+
+    pushWord(_PC.w);
+
+    switch (interruptNum) {
+        case 0x0: _PC.w = 0x40; break;
+        case 0x1: _PC.w = 0x48; break;
+        case 0x2: _PC.w = 0x50; break;
+        case 0x4: _PC.w = 0x60; break;
+    }
+}
+
 void GameBoy::executeOpcode(const word address)
 {
-    byte opcode = _cartMemory[opcode];
+    byte opcode = _cartMemory[address];
 
     switch (opcode) {
         // ld reg,reg
@@ -329,6 +423,7 @@ void GameBoy::emulateCycles(const unsigned int numCycles)
 
     while (_numCycles > 0) {
         executeOpcode(_PC.w);
+        updateTimers(numCycles);
     }
 }
 
