@@ -26,7 +26,6 @@ class GameBoy
 
         bool initialize                 ();
         bool loadRom                    (const char* filename);
-        void executeOpcode              (const word address);
         void emulateCycles              (const unsigned int numCycles);
 
         // CPU* gbCPU;
@@ -47,7 +46,7 @@ class GameBoy
         } reg;
 
         enum MBC {
-            MBC1, MBC2
+            MBC1, MBC2, MC3, MBC4, MBC5
         };
 
         reg     _PC;                    // Program counter
@@ -73,6 +72,11 @@ class GameBoy
         bool    _isStopped;             // CPU stopped flag
         int     _numCycles;             // Number of cycles to execute
 
+        inline byte setBit              (const byte data, const byte bit);
+        inline byte resetBit            (const byte data, const byte bit);
+
+        void executeOpcode              (const word address);
+        void executeExtendedOpcode      (const word address);
         void writeMemory                (const word address, const byte data);
         byte readMemory                 (const word address);
         void detectMemoryBankController ();
@@ -91,6 +95,7 @@ class GameBoy
         void doInterrupts               ();
         void serviceInterrupt           (const byte interruptNum);
         void pushWord                   (const word data);
+        void doDmaTransfer              (const byte data);
 
         // LD reg,reg
         void ld_aa();
