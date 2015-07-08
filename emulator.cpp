@@ -2,11 +2,8 @@
 #include <fstream>
 #include <istream>
 //#include <iterator>
-#include "gameboy.hpp"
+#include "emulator.hpp"
 
-#define TIMA    0xFF05
-#define TMA     0xFF06
-#define TMC     0xFF07
 
 // Z80 mnemonics, incomplete
 const char *Z80_mnemonics[0x100] =
@@ -50,31 +47,36 @@ const byte cpuCycles[0x100] =
  /*F*/11, 10, 10, 4,  11, 11, 7,  11, 11, 5,  10, 4,  11, 0,  7,  11
 };
 
-GameBoy::GameBoy()
+GameBoy::Emulator::Emulator()
 {
-    _cartMemory = new byte[CART_SIZE]();
-    _romMemory  = new byte[MAX_ROM_SIZE]();
-    _ramBanks   = new byte[MAX_RAM_SIZE]();
+    _cartMemory = new byte[SIZE_CART]();
+    _romMemory  = new byte[SIZE_MAX_ROM]();
+    _ramBanks   = new byte[SIZE_MAX_RAM]();
 }
 
-GameBoy::~GameBoy()
+GameBoy::Emulator::~Emulator()
 {
     delete[] _cartMemory;
     delete[] _romMemory;
     delete[] _ramBanks;
 }
 
-inline byte GameBoy::setBit(const byte data, const byte bit)
+inline byte GameBoy::Emulator::setBit(const byte data, const byte bit) const
 {
     return (bit >= 0 && bit <= 7) ? data | (1 << bit) : data;
 }
 
-inline byte GameBoy::resetBit(const byte data, const byte bit)
+inline byte GameBoy::Emulator::resetBit(const byte data, const byte bit) const
 {
     return (bit >= 0 && bit <= 7) ? data & ~(1 << bit) : data;
 }
 
-bool GameBoy::initialize()
+inline bool GameBoy::Emulator::isBitSet(const byte data, const byte bit) const
+{
+    return data & (1 << bit);
+}
+
+bool GameBoy::Emulator::initialize()
 {
     // Reset cycle count
     _numCycles = 0;
@@ -138,7 +140,7 @@ bool GameBoy::initialize()
     return true;
 }
 
-void GameBoy::detectMemoryBankController()
+void GameBoy::Emulator::detectMemoryBankController()
 {
     // Cartridge type is located at address 0x0147 in cartridge header
     switch (_cartMemory[0x0147]) {
@@ -151,7 +153,7 @@ void GameBoy::detectMemoryBankController()
     }
 }
 
-bool GameBoy::loadRom(const char *filename)
+bool GameBoy::Emulator::loadRom(const char *filename)
 {
     std::ifstream rom;
     rom.exceptions(std::ifstream::failbit | std::ifstream::badbit);
@@ -180,7 +182,14 @@ bool GameBoy::loadRom(const char *filename)
     return true;
 }
 
-void GameBoy::writeMemory(const word address, const byte data)
+void GameBoy::Emulator::emulateCpu()
+{
+    const int MAX_CYCLES = 69905;
+    emulateCycles(MAX_CYCLES);
+    renderScreen();
+}
+
+void GameBoy::Emulator::writeMemory(const word address, const byte data)
 {
     // If writing to ROM (0x0000 - 0x7FFF) switch banks
     if (address < 0x8000) {
@@ -190,7 +199,7 @@ void GameBoy::writeMemory(const word address, const byte data)
         switchBanks(address, data);
     }
 
-    // If writing to echo RAM, also write to RAM (echo RAM)
+    // If writing to echo RAM, also write to RAM
     else if (address >= 0xE000 && address < 0xFE00) {
         _romMemory[address]          = data;
         _romMemory[address - 0x2000] = data;
@@ -205,7 +214,7 @@ void GameBoy::writeMemory(const word address, const byte data)
     }
 
     // If writing to TMC, set clock frequency
-    else if (address == TMC) {
+        else if (address == TMC) {
         byte currentClockFreq = getClockFreq();
         _romMemory[TMC] = data;
         byte newClockFreq = getClockFreq();
@@ -216,11 +225,16 @@ void GameBoy::writeMemory(const word address, const byte data)
     }
 
     // If writing to divider register, reset
-    else if (address == 0xFF04) {
-        _romMemory[0xFF04] = 0;
+    else if (address == DIV) { // 0xFF04
+        _romMemory[DIV] = 0;
     }
 
-    else if (address == 0xFF46) {
+    // If writing to current scanline, reset scanline
+    else if (address == LY) { // 0xFF44
+        _romMemory[LY] = 0;
+    }
+
+    else if (address == DMA) { // 0xFF46
         doDmaTransfer(data);
     }
 
@@ -229,7 +243,7 @@ void GameBoy::writeMemory(const word address, const byte data)
     }
 }
 
-byte GameBoy::readMemory(const word address)
+byte GameBoy::Emulator::readMemory(const word address)
 {
     // Reading from ROM memory bank (0x4000 - 0x7FFF)?
     if (address >= 0x4000 && address <= 0x7FFF) {
@@ -248,28 +262,34 @@ byte GameBoy::readMemory(const word address)
     }
 }
 
-void GameBoy::switchBanks(const word address, const byte data)
+void GameBoy::Emulator::switchBanks(const word address, const byte data)
 {
     if (address < 0x2000) {
         if (_MBC == MBC1 || _MBC == MBC2) {
             enableRamBank(address, data);
         }
-    } else if (address >= 0x2000 && address < 0x4000) {
+    }
+
+    else if (address >= 0x2000 && address < 0x4000) {
         if (_MBC == MBC1 || _MBC == MBC2) {
             changeLoRamBank(data);
         }
-    } else if (address >= 0x4000 && address < 0x6000) {
+    }
+
+    else if (address >= 0x4000 && address < 0x6000) {
         if (_MBC == MBC1) {
             (_romBankingEnabled) ? changeHiRomBank(data) : changeRamBank(data);
         }
-    } else if (address >= 0x6000 && address < 0x8000) {
+    }
+
+    else if (address >= 0x6000 && address < 0x8000) {
         if (_MBC == MBC1) {
             changeRomRamMode(data);
         }
     }
 }
 
-void GameBoy::enableRamBank(const word address, const byte data)
+void GameBoy::Emulator::enableRamBank(const word address, const byte data)
 {
     // If MBC2 bit 4 of address must be 0, else return
     if ((_MBC == MBC2) && ((address & 0x8) == 1)) {
@@ -282,7 +302,7 @@ void GameBoy::enableRamBank(const word address, const byte data)
     }
 }
 
-void GameBoy::changeLoRamBank(const byte data)
+void GameBoy::Emulator::changeLoRamBank(const byte data)
 {
     if (_MBC == MBC2) {
         _currentRomBank = data & 0xF;
@@ -300,7 +320,7 @@ void GameBoy::changeLoRamBank(const byte data)
     }
 }
 
-void GameBoy::changeHiRomBank(const byte data)
+void GameBoy::Emulator::changeHiRomBank(const byte data)
 {
     _currentRomBank = data & 31;
     _currentRomBank |= (data & 224);
@@ -310,7 +330,7 @@ void GameBoy::changeHiRomBank(const byte data)
     }
 }
 
-void GameBoy::changeRamBank(const byte data)
+void GameBoy::Emulator::changeRamBank(const byte data)
 {
     // Cannot change RAM banks in MBC2
     if (_MBC == MBC2) {
@@ -320,17 +340,17 @@ void GameBoy::changeRamBank(const byte data)
     }
 }
 
-void GameBoy::changeRomRamMode(const byte data)
+void GameBoy::Emulator::changeRomRamMode(const byte data)
 {
     // If bit 0 of data byte is set, rom banking is enabled
-    _romBankingEnabled = ((data & 0x1) == 0) ? true : false;
+    _romBankingEnabled = (isBitSet(data, 0)) ? true : false;
 
     if (_romBankingEnabled) {
         _currentRamBank = 0;
     }
 }
 
-void GameBoy::updateTimers(const int numCycles)
+void GameBoy::Emulator::updateTimers(const int numCycles)
 {
     doDividerRegister(numCycles);
 
@@ -342,20 +362,20 @@ void GameBoy::updateTimers(const int numCycles)
         setClockFreq();
         if (readMemory(TIMA) == 255) {
             writeMemory(TIMA, readMemory(TMA));
-            generateInterrupt(2);
+            generateInterrupt(IRQ_TIMER);
         } else {
             writeMemory(TIMA, readMemory(TIMA) + 1);
         }
     }
 }
 
-byte GameBoy::getClockFreq()
+byte GameBoy::Emulator::getClockFreq()
 {
     // Bits 1 and 0 of TMC store current clock frequency
     return readMemory(TMC) & 0x3;
 }
 
-void GameBoy::setClockFreq()
+void GameBoy::Emulator::setClockFreq()
 {
     byte clockFreq = getClockFreq();
     switch (clockFreq) {
@@ -366,64 +386,62 @@ void GameBoy::setClockFreq()
     }
 }
 
-void GameBoy::doDividerRegister(const int numCycles)
+void GameBoy::Emulator::doDividerRegister(const int numCycles)
 {
     _dividerRegister += numCycles;
     if (_dividerRegister >= 255) {
         _dividerCounter = 0;
-        _romMemory[0xFF04]++; // We must write to divider register directly
+        _romMemory[DIV]++; // We must write to divider register directly
     }
 }
 
-bool GameBoy::isClockEnabled()
+bool GameBoy::Emulator::isClockEnabled()
 {
     // TMC bit 2 is clock enable flag (1 == on, 0 == off)
-    return ((readMemory(TMC) & 0x4) != 0) ? true : false;
+    return (isBitSet(readMemory(TMC), 2)) ? true : false;
 }
 
-void GameBoy::generateInterrupt(const byte interruptVector)
+void GameBoy::Emulator::generateInterrupt(const byte interruptVector)
 {
-    byte interruptRequest = readMemory(0xFF0F);
-    //interruptRequest |= interruptVector;
+    byte interruptRequest = readMemory(IF);
     interruptRequest = setBit(interruptRequest, interruptVector);
-    writeMemory(0xFF0F, interruptVector);
+    writeMemory(IF, interruptVector);
 }
 
-void GameBoy::doInterrupts()
+void GameBoy::Emulator::doInterrupts()
 {
     if (_interruptsEnabled) {
         byte interruptRequest = readMemory(0xFF0F);
-        byte interruptEnable  = readMemory(0xFFFF);
+        byte interruptEnable  = readMemory(IE);
 
         if (interruptRequest > 0) {
             for (int i = 0; i < 5; i++) {
                 if ((interruptRequest & i) && (interruptEnable & i)) {
-                        serviceInterrupt(i);
+                    serviceInterrupt(i);
                 }
             }
         }
     }
 }
 
-void GameBoy::serviceInterrupt(const byte interruptNum)
+void GameBoy::Emulator::serviceInterrupt(const byte interruptNum)
 {
     _interruptsEnabled = false;
-    byte interruptRequest = readMemory(0xFF0F);
-    //interruptRequest &= ~interruptNum;
+    byte interruptRequest = readMemory(IF);
     interruptRequest = resetBit(interruptRequest, interruptNum);
-    writeMemory(0xFF0F, interruptRequest);
+    writeMemory(IF, interruptRequest);
 
     pushWord(_PC.w);
 
     switch (interruptNum) {
-        case 0x0: _PC.w = 0x40; break;  // VBLANK
-        case 0x1: _PC.w = 0x48; break;  // LCD
-        case 0x2: _PC.w = 0x50; break;  // TIMER
-        case 0x4: _PC.w = 0x60; break;  // JOYPAD
+        case IRQ_VBLANK: _PC.w = VECTOR_VBLANK; break;  // VBLANK
+        case IRQ_LCDC:   _PC.w = VECTOR_LCDC;   break;  // LCD
+        case IRQ_TIMER:  _PC.w = VECTOR_TIMER;  break;  // TIMER
+        case IRQ_JOYPAD: _PC.w = VECTOR_JOYPAD; break;  // JOYPAD
     }
 }
 
-void GameBoy::doDmaTransfer(const byte data)
+void GameBoy::Emulator::doDmaTransfer(const byte data)
 {
     const word ADDRESS = data << 8;
     for (int i = 0; i < 0xA0; i++) {
@@ -431,18 +449,18 @@ void GameBoy::doDmaTransfer(const byte data)
     }
 }
 
-void GameBoy::pushWord(const word data)
+void GameBoy::Emulator::pushWord(const word data)
 {
 
 }
 
-void GameBoy::executeOpcode(const word address)
+void GameBoy::Emulator::executeOpcode(const word address)
 {
     byte opcode = _cartMemory[address];
 
     switch (opcode) {
         // ld reg,reg
-        case 0xCB: executeExtendedOpcode(address); break;
+        case 0xCB: _PC.w++; executeExtendedOpcode(address); break;
 
         case 0x7F: ld_aa(); break;
         case 0x78: ld_ab(); break;
@@ -459,427 +477,492 @@ void GameBoy::executeOpcode(const word address)
     _numCycles -= cpuCycles[opcode];
 }
 
-void GameBoy::executeExtendedOpcode(const word address)
+void GameBoy::Emulator::executeExtendedOpcode(const word address)
 {
+    byte opcode = _cartMemory[address];
 
+    switch (opcode) {
+        default: break;
+    }
+
+    _numCycles -= cpuCycles[opcode];
 }
 
-void GameBoy::emulateCycles(const unsigned int numCycles)
+void GameBoy::Emulator::emulateCycles(const unsigned int numCycles)
 {
     _numCycles += numCycles;
 
     while (_numCycles > 0) {
-        executeOpcode(_PC.w);
+        executeOpcode(_PC.w);       // executeOpcode() decrements numCycles
         updateTimers(numCycles);
+        updateScreen(numCycles);
+        doInterrupts();
+    }
+
+    renderScreen();
+}
+
+bool GameBoy::Emulator::isLcdEnabled()
+{
+    return true;
+}
+
+void GameBoy::Emulator::setLcdMode()
+{
+
+}
+
+void GameBoy::Emulator::drawScanline()
+{
+
+}
+
+void GameBoy::Emulator::renderScreen()
+{
+
+}
+
+void GameBoy::Emulator::updateScreen(const int numCycles)
+{
+    setLcdMode();
+
+    if (isLcdEnabled()) {
+        _scanlineCounter -= numCycles;
+    }
+
+    if (_scanlineCounter <= 0) {
+        // Scanline done, move on to next scanline
+        // _romMemory[0xFF44]++;
+        // byte currentLine = readMemory(0xFF44);
+        byte currentScanline = _romMemory[LY]++;
+
+        // 456 cycles per scanline
+        _scanlineCounter = CYCLES_PER_SCANLINE;
+
+        // Draw the current scanline
+        if (currentScanline >= 0 && currentScanline < VBLANK_START_SCANLINE) {
+            drawScanline();
+        }
+
+        // 144 - 153 is VBLANK
+        if (currentScanline == VBLANK_START_SCANLINE) {
+            generateInterrupt(IRQ_VBLANK);
+        }
+
+        // VBLANK over, reset current scanline;
+        else if (currentScanline > VBLANK_END_SCANLINE) {
+            _romMemory[LY] = 0;
+        }
     }
 }
 
-void GameBoy::ld_aa()
+void GameBoy::Emulator::ld_aa()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ab()
+void GameBoy::Emulator::ld_ab()
 {
     _AF.b.h = _BC.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ac()
+void GameBoy::Emulator::ld_ac()
 {
     _AF.b.h = _BC.b.l;
     _PC.w++;
 }
 
-void GameBoy::ld_ad()
+void GameBoy::Emulator::ld_ad()
 {
     _AF.b.h = _DE.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ae()
+void GameBoy::Emulator::ld_ae()
 {
     _AF.b.h = _DE.b.l;
     _PC.w++;
 }
 
-void GameBoy::ld_ah()
+void GameBoy::Emulator::ld_ah()
 {
     _AF.b.h = _HL.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_al()
+void GameBoy::Emulator::ld_al()
 {
     _AF.b.h = _HL.b.l;
     _PC.w++;
 }
 
-void GameBoy::ld_ahl()
+void GameBoy::Emulator::ld_ahl()
 {
     _AF.b.h = _romMemory[_HL.w];
     _PC.w++;
 }
 
-void GameBoy::ld_ba()
+void GameBoy::Emulator::ld_ba()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_bb()
+void GameBoy::Emulator::ld_bb()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_bc()
+void GameBoy::Emulator::ld_bc()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_bd()
+void GameBoy::Emulator::ld_bd()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_be()
+void GameBoy::Emulator::ld_be()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_bh()
+void GameBoy::Emulator::ld_bh()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_bl()
+void GameBoy::Emulator::ld_bl()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_bhl()
+void GameBoy::Emulator::ld_bhl()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ca()
+void GameBoy::Emulator::ld_ca()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_cb()
+void GameBoy::Emulator::ld_cb()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_cc()
+void GameBoy::Emulator::ld_cc()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_cd()
+void GameBoy::Emulator::ld_cd()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ce()
+void GameBoy::Emulator::ld_ce()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ch()
+void GameBoy::Emulator::ld_ch()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_cl()
+void GameBoy::Emulator::ld_cl()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_chl()
+void GameBoy::Emulator::ld_chl()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_da()
+void GameBoy::Emulator::ld_da()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_db()
+void GameBoy::Emulator::ld_db()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_dc()
+void GameBoy::Emulator::ld_dc()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_dd()
+void GameBoy::Emulator::ld_dd()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_de()
+void GameBoy::Emulator::ld_de()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_dh()
+void GameBoy::Emulator::ld_dh()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_dl()
+void GameBoy::Emulator::ld_dl()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_dhl()
+void GameBoy::Emulator::ld_dhl()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ea()
+void GameBoy::Emulator::ld_ea()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_eb()
+void GameBoy::Emulator::ld_eb()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ec()
+void GameBoy::Emulator::ld_ec()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ed()
+void GameBoy::Emulator::ld_ed()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ee()
+void GameBoy::Emulator::ld_ee()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_eh()
+void GameBoy::Emulator::ld_eh()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_el()
+void GameBoy::Emulator::ld_el()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ehl()
+void GameBoy::Emulator::ld_ehl()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ha()
+void GameBoy::Emulator::ld_ha()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hb()
+void GameBoy::Emulator::ld_hb()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hc()
+void GameBoy::Emulator::ld_hc()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hd()
+void GameBoy::Emulator::ld_hd()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_he()
+void GameBoy::Emulator::ld_he()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hh()
+void GameBoy::Emulator::ld_hh()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hl()
+void GameBoy::Emulator::ld_hl()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hhl()
+void GameBoy::Emulator::ld_hhl()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_la()
+void GameBoy::Emulator::ld_la()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_lb()
+void GameBoy::Emulator::ld_lb()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_lc()
+void GameBoy::Emulator::ld_lc()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ld()
+void GameBoy::Emulator::ld_ld()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_le()
+void GameBoy::Emulator::ld_le()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_lh()
+void GameBoy::Emulator::ld_lh()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_ll()
+void GameBoy::Emulator::ld_ll()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_lhl()
+void GameBoy::Emulator::ld_lhl()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hla()
+void GameBoy::Emulator::ld_hla()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hlb()
+void GameBoy::Emulator::ld_hlb()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hlc()
+void GameBoy::Emulator::ld_hlc()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hld()
+void GameBoy::Emulator::ld_hld()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hle()
+void GameBoy::Emulator::ld_hle()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hlh()
+void GameBoy::Emulator::ld_hlh()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
-void GameBoy::ld_hll()
+void GameBoy::Emulator::ld_hll()
 {
     _AF.b.h = _AF.b.h;
     _PC.w++;
 }
 
 
-void GameBoy::ld_abc() // 0x0A
+
+void GameBoy::Emulator::ld_abc() // 0x0A
 {
     _AF.b.h = _romMemory[_BC.w];
     _PC.w++;
 }
-void GameBoy::ld_ade() // 0x1A
+void GameBoy::Emulator::ld_ade() // 0x1A
 {
     _AF.b.h = _romMemory[_DE.w];
     _PC.w++;
 }
-void GameBoy::ld_bca() // 0x02
+void GameBoy::Emulator::ld_bca() // 0x02
 {
     _romMemory[_BC.w] = _AF.b.h;
     _PC.w++;
 }
-void GameBoy::ld_dea() // 0x12
+void GameBoy::Emulator::ld_dea() // 0x12
 {
     _romMemory[_DE.w] = _AF.b.h;
     _PC.w++;
 }
-void GameBoy::ldd_ahl() // 0x3A
+void GameBoy::Emulator::ldd_ahl() // 0x3A
 {
     _AF.b.h = _romMemory[_HL.w];
     _HL.w--;
     _PC.w++;
 }
-void GameBoy::ldd_hla() // 0x32
+void GameBoy::Emulator::ldd_hla() // 0x32
 {
     _romMemory[_HL.w] = _AF.b.h;
     _HL.w--;
