@@ -30,9 +30,12 @@ namespace GameBoy
             inline byte fetchOpcode (const word address) const;
             inline byte readRom     (const word address) const;
             inline void writeRom    (const word address, const byte data);
+            void writeMemory        (const word address, const byte data);
             inline byte readRom     (const word address, const byte data) const;
 
             byte readMemory         (const word address);
+
+            inline bool isBitSet    (const byte data, const byte bit) const;
 
             byte*   _cartMemory;    // 2MB cartridge memory
 
@@ -97,10 +100,8 @@ namespace GameBoy
 
             inline byte setBit      (const byte data, const byte bit) const;
             inline byte resetBit    (const byte data, const byte bit) const;
-            inline bool isBitSet    (const byte data, const byte bit) const;
 
             void reset              ();
-            void writeMemory        (const word address, const byte data);
             void pushWord           (const word data);
             void doDmaTransfer      (const byte data);
     };
