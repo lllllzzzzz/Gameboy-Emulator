@@ -17,6 +17,11 @@ GameBoy::Memory::~Memory()
 {
 }
 
+inline bool GameBoy::Memory::isBitSet(const byte data, const byte bit) const
+{
+    return (data & (1 << bit)) ? true : false;
+}
+
 inline byte GameBoy::Memory::readRom(const word address) const
 {
     return _romMemory[address];
