@@ -33,6 +33,8 @@ namespace GameBoy
             byte getClockFreq   ();
             void setClockFreq   ();
 
+            void doDividerRegister(const int numCycles);
+
         protected:
 
         private:
