@@ -36,8 +36,8 @@ void GameBoy::LCD::updateScreen(const int numCycles)
         // This means we need to move on and draw the next scanline.
 
         // _romMemory[LY]++;
-        _MMU->writeRom(0xFF44, _MMU->readRom(0xFF44) + 1);
-        byte currentScanline = _MMU->readMemory(0xFF44);
+        _MMU->writeRom(LY, _MMU->readRom(LY) + 1);
+        byte currentScanline = _MMU->readMemory(LY);
         _scanlineCounter = CYCLES_PER_SCANLINE;
 
         // There are 144 (0 to 143) scanlines to draw before the VBLANK period.
@@ -60,7 +60,7 @@ void GameBoy::LCD::updateScreen(const int numCycles)
         // VBLANK over, reset current scanline
         else if (currentScanline > VBLANK_END_SCANLINE) {
             // _romMemory[LY] = 0;
-            _MMU->writeRom(0xFF44, 0);
+            _MMU->writeRom(LY, 0);
         }
     }
 }
@@ -72,7 +72,18 @@ bool GameBoy::LCD::isLcdEnabled()
 
 void GameBoy::LCD::setLcdMode()
 {
+    byte status = _MMU->readMemory(LCD_STATUS);
 
+    if (!isLcdEnabled()) {
+        _scanlineCounter = CYCLES_PER_SCANLINE;
+        _MMU->writeRom(LY, 0);
+
+        status &= 0xFC; // 0b11111100
+
+        // TODO: Fix this line:
+        //_MMU->writeMemory(LCD_STATUS, _MMU->isBitSet(_MBC->isBitSet(status, 0)));
+        return;
+    }
 }
 
 void GameBoy::LCD::drawScanline()
