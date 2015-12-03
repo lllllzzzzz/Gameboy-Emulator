@@ -20,6 +20,11 @@ GameBoy::Timer::~Timer()
 {
 }
 
+void GameBoy::Timer::doDividerRegister(const int numCycles)
+{
+    // TODO: Implement method
+}
+
 void GameBoy::Timer::updateTimers(const int numCycles)
 {
     doDividerRegister(numCycles);
