@@ -90,11 +90,7 @@ void GameBoy::MBC::changeLoRamBank(const byte data)
 
     if (_MBC == MBCType::MBC2) {
         _currentRomBank = data & LOWER_NYBBLE;
-
-        if (_currentRomBank == 0) {
-            _currentRomBank++;
-        }
-
+        _currentRomBank += (_currentRomBank == 0);
         return;
     }
 
@@ -105,10 +101,7 @@ void GameBoy::MBC::changeLoRamBank(const byte data)
 
     _currentRomBank &= UPPER_3_BITS;
     _currentRomBank |= (data & LOWER_5_BITS);
-
-    if (_currentRomBank == 0) {
-        _currentRomBank++;
-    }
+    _currentRomBank += (_currentRomBank == 0);
 }
 
 void GameBoy::MBC::changeHiRomBank(const byte data)
@@ -121,10 +114,7 @@ void GameBoy::MBC::changeHiRomBank(const byte data)
 
     _currentRomBank = data & LOWER_5_BITS;
     _currentRomBank |= (data & UPPER_3_BITS);
-
-    if (_currentRomBank == 0) {
-        _currentRomBank++;
-    }
+    _currentRomBank += (_currentRomBank == 0);
 }
 
 void GameBoy::MBC::changeRamBank(const byte data)
