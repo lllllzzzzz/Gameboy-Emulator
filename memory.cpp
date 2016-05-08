@@ -81,13 +81,29 @@ void GameBoy::Memory::reset()
 
 void GameBoy::Memory::writeMemory(const word address, const byte data)
 {
+    const int UPPER_RESTRICTED_MEMORY = 0xFEFF;
+
+    enum memoryMap {
+                INTERNAL_RAM             = 0xFF80,
+                EMPTY_UNUSABLE_IO_2      = 0xFF4C,
+                IO_PORTS                 = 0xFF00,
+                EMPTY_UNUSABLE_IO_1      = 0xFEA0,
+                SPRITE_ATTRIB_MEM        = 0xFE00,
+                INTERNAL_RAM_8KB_ECHO    = 0xE000,
+                INTERAL_RAM_8KB          = 0xC000,
+                SWITCHABLE_RAM_BANK_8KB  = 0xA000,
+                VIDEO_RAM_8KB            = 0x8000,
+                SWITCHABLE_ROM_BANK_16KB = 0x4000,
+                ROM_BANK_16KB_0          = 0x0000
+            };
+
     // If writing to ROM (0x0000 - 0x7FFF) switch banks
     if (address >= ROM_BANK_16KB_0 && address < VIDEO_RAM_8KB) {
         _MBC->switchBanks(address, data);
     }
 
     // If writing to echo RAM, also write to RAM
-    else if (address >= INTERNAL_RAM_8KB_ECHO && address < SPRITE_ATTRIB_MEMORY) {
+    else if (address >= INTERNAL_RAM_8KB_ECHO && address < SPRITE_ATTRIB_MEM) {
         _romMemory[address]                 = data;
         _romMemory[address - SIZE_RAM_BANK] = data;
         return;

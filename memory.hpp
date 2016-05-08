@@ -61,7 +61,7 @@ namespace GameBoy
                 EMPTY_UNUSABLE_IO_2      = 0xFF4C,
                 IO_PORTS                 = 0xFF00,
                 EMPTY_UNUSABLE_IO_1      = 0xFEA0,
-                SPRITE_ATTRIB_MEMORY     = 0xFE00,
+                SPRITE_ATTRIB_MEM        = 0xFE00,
                 INTERNAL_RAM_8KB_ECHO    = 0xE000,
                 INTERAL_RAM_8KB          = 0xC000,
                 SWITCHABLE_RAM_BANK_8KB  = 0xA000,

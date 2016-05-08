@@ -23,6 +23,7 @@ namespace GameBoy {
     class Interrupts;
     class Timer;
     class MBC;
+    class Joypad;
 
 	class CPU {
 	    public:

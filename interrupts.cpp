@@ -7,21 +7,21 @@
 
 GameBoy::Interrupts::Interrupts()
 {
-    // _MMU = GameBoy::Memory::Memory();
+    _MMU = GameBoy::Memory::Memory();
 }
 
 GameBoy::Interrupts::~Interrupts()
 {
 }
 
-void GameBoy::Emulator::generateInterrupt(const byte interruptVector)
+void GameBoy::Interrupts::generateInterrupt(const byte interruptVector)
 {
-    byte interruptRequest = readMemory(IF);
+    byte interruptRequest = _MMU->readMemory(IF);
     interruptRequest = setBit(interruptRequest, interruptVector);
-    writeMemory(IF, interruptVector);
+    _MMU->writeMemory(IF, interruptVector);
 }
 
-void GameBoy::Emulator::doInterrupts()
+void GameBoy::Interrupts::doInterrupts()
 {
     if (_interruptsEnabled) {
         byte interruptRequest = readMemory(0xFF0F);
@@ -37,12 +37,12 @@ void GameBoy::Emulator::doInterrupts()
     }
 }
 
-void GameBoy::Emulator::serviceInterrupt(const byte interruptNum)
+void GameBoy::Interrupts::serviceInterrupt(const byte interruptNum)
 {
     _interruptsEnabled = false;
-    byte interruptRequest = readMemory(IF);
-    interruptRequest = resetBit(interruptRequest, interruptNum);
-    writeMemory(IF, interruptRequest);
+    byte interruptRequest = _MMU->readMemory(IF);
+    interruptRequest = _MMU->resetBit(interruptRequest, interruptNum);
+    _MMU->writeMemory(IF, interruptRequest);
 
     pushWord(_PC.w);
 
