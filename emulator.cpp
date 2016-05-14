@@ -1,7 +1,6 @@
 #include <iostream>
 #include <fstream>
 #include <istream>
-//#include <iterator>
 #include "emulator.hpp"
 
 
